@@ -1,0 +1,23 @@
+#!/bin/sh
+# ZIM-CIVILIZATION launcher.
+#   ./herd              -> interactive multiplexer (3 agents)
+#   ./herd doctor       -> environment check
+#   ./herd 5            -> multiplexer with 5 agents
+#   ./herd 3 "do the thing"  -> headless broadcast
+cd "$(dirname "$0")" || exit 1
+
+case "$1" in
+  doctor|run|send|ps)
+    exec python3 herd.py "$@"
+    ;;
+  ""|*[!0-9]*)
+    exec python3 herd.py run --agents 3 --tui
+    ;;
+  *)
+    n="$1"; shift
+    if [ -n "$1" ]; then
+      exec python3 herd.py run --agents "$n" --prompt "$*"
+    fi
+    exec python3 herd.py run --agents "$n" --tui
+    ;;
+esac

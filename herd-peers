@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 "$HERD_ROOT/bus.py" list

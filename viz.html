@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZIM-CIVILIZATION // HERD HARNESS</title>
+<style>
+  :root{
+    --bg:#030504;
+    --panel:#070b08;
+    --panel2:#0a1109;
+    --line:#16301d;
+    --line2:#1e4429;
+    --dim:#4b6b55;
+    --text:#b8f5c8;
+    --green:#38ff8f;
+    --amber:#ffb340;
+    --red:#ff4f4f;
+    --cyan:#5ce1ff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:12.5px;
+    line-height:1.45;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* CRT overlay */
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:99;
+    background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.22) 2px 3px);
+    mix-blend-mode:multiply;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:98;
+    background:radial-gradient(ellipse at 50% 40%,rgba(56,255,143,.05),transparent 70%);
+  }
+  .wrap{height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:8px;padding:10px;position:relative;z-index:1}
+
+  /* ---------- header ---------- */
+  header{
+    border:1px solid var(--line);background:linear-gradient(180deg,var(--panel2),var(--panel));
+    padding:8px 12px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  }
+  .brand{display:flex;align-items:baseline;gap:9px}
+  .brand b{font-size:15px;letter-spacing:3px;color:var(--green);text-shadow:0 0 10px rgba(56,255,143,.45)}
+  .brand span{color:var(--dim);letter-spacing:1px;font-size:10.5px}
+  .stats{display:flex;gap:20px;margin-left:auto;flex-wrap:wrap}
+  .stat{display:flex;flex-direction:column;line-height:1.15}
+  .stat u{text-decoration:none;color:var(--dim);font-size:9.5px;letter-spacing:1.6px}
+  .stat b{font-weight:500;font-size:13.5px;color:var(--text)}
+  .live{display:flex;align-items:center;gap:6px;color:var(--green);font-size:10.5px;letter-spacing:1.5px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.6s steps(1,end) infinite}
+  @keyframes blink{0%,60%{opacity:1}61%,100%{opacity:.18}}
+
+  /* ---------- main ---------- */
+  main{display:grid;grid-template-columns:1fr 360px;gap:8px;min-height:0}
+  .agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));grid-auto-rows:min-content;gap:8px;overflow:auto;align-content:start;padding-right:2px}
+
+  .card{
+    border:1px solid var(--line);background:linear-gradient(180deg,var(--panel2),var(--panel));
+    padding:8px 10px 9px;cursor:pointer;position:relative;transition:border-color .15s,box-shadow .15s;
+  }
+  .card:hover{border-color:var(--line2)}
+  .card.sel{border-color:var(--green);box-shadow:0 0 0 1px rgba(56,255,143,.25),0 0 18px rgba(56,255,143,.08)}
+  .card.limit{border-color:var(--red);animation:flash .18s steps(1,end) 5}
+  @keyframes flash{0%{background:rgba(255,79,79,.16)}50%{background:rgba(255,79,79,.04)}100%{background:transparent}}
+  .card.switching{border-color:var(--amber)}
+  .card .hd{display:flex;align-items:center;gap:8px;border-bottom:1px dashed var(--line);padding-bottom:5px;margin-bottom:6px}
+  .card .nm{letter-spacing:2px;font-size:12px;color:var(--green);text-shadow:0 0 8px rgba(56,255,143,.3)}
+  .card .cli{color:var(--dim);font-size:10px;border:1px solid var(--line);padding:0 4px;border-radius:2px}
+  .card .st{margin-left:auto;font-size:10px;letter-spacing:1.4px;white-space:nowrap}
+  .st.run{color:var(--green)} .st.idle{color:var(--dim)}
+  .st.limit{color:var(--red);text-shadow:0 0 8px rgba(255,79,79,.6)}
+  .st.switching{color:var(--amber)}
+  .row{display:flex;gap:8px;align-items:baseline;margin:2.5px 0}
+  .k{color:var(--dim);font-size:10px;letter-spacing:1.2px;min-width:52px;flex:none}
+  .v{color:var(--text);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .v.model{color:var(--cyan)}
+  .v.acct{color:var(--amber)}
+  .bar{margin:6px 0 3px;font-size:12px;letter-spacing:-.5px;white-space:nowrap}
+  .bar .fill{color:var(--green);text-shadow:0 0 8px rgba(56,255,143,.4)}
+  .bar .fill.warn{color:var(--amber);text-shadow:0 0 8px rgba(255,179,64,.45)}
+  .bar .fill.crit{color:var(--red);text-shadow:0 0 10px rgba(255,79,79,.6)}
+  .bar .empty{color:#12281a}
+  .meta{display:flex;justify-content:space-between;color:var(--dim);font-size:10px;letter-spacing:.8px}
+  .meta b{color:var(--text);font-weight:500}
+  .task{margin-top:5px;color:var(--dim);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .task i{color:var(--text);font-style:normal}
+  .tag{position:absolute;top:6px;right:8px;font-size:9px;letter-spacing:1.5px;color:var(--red);opacity:0}
+  .card.limit .tag{opacity:1;animation:blink .4s steps(1,end) infinite}
+
+  /* ---------- aside ---------- */
+  aside{display:grid;grid-template-rows:auto 1fr;gap:8px;min-height:0}
+  .pnl{border:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+  .pnl>h2{
+    margin:0;padding:6px 10px;font-size:10px;letter-spacing:2.2px;color:var(--dim);font-weight:500;
+    border-bottom:1px solid var(--line);background:var(--panel2);display:flex;gap:8px;align-items:center;
+  }
+  .pnl>h2 em{font-style:normal;margin-left:auto;color:var(--line2)}
+  .pool{padding:6px 10px 8px;overflow:auto}
+  .prow{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px dotted #0f2216}
+  .prow:last-child{border-bottom:0}
+  .prow .pid{color:var(--cyan);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prow .pcap{color:var(--dim);font-size:9.5px}
+  .pips{display:flex;gap:2.5px}
+  .pip{width:6px;height:6px;border-radius:50%;background:#12281a}
+  .pip.on{background:var(--green);box-shadow:0 0 6px rgba(56,255,143,.7)}
+  .pip.on.limit{background:var(--red);box-shadow:0 0 6px rgba(255,79,79,.8)}
+  .pip.on.switching{background:var(--amber);box-shadow:0 0 6px rgba(255,179,64,.8)}
+  .log{overflow:auto;padding:6px 10px;font-size:10.8px;line-height:1.6}
+  .log div{white-space:pre-wrap;word-break:break-word;border-bottom:1px dotted #0d1d13;padding:1.5px 0}
+  .log .t{color:#2f4a38}
+  .log .i{color:var(--text)} .log .s{color:var(--amber)} .log .l{color:var(--red)}
+  .log .o{color:var(--green)} .log .a{color:var(--cyan)} .log .d{color:var(--dim)}
+
+  /* ---------- prompt ---------- */
+  footer{
+    border:1px solid var(--line);background:linear-gradient(180deg,var(--panel2),var(--panel));
+    padding:7px 11px;display:flex;align-items:center;gap:8px;
+  }
+  footer .ps1{color:var(--green);letter-spacing:.5px;white-space:nowrap}
+  footer .tgt{color:var(--amber);white-space:nowrap}
+  footer .sig{color:var(--dim)}
+  footer input{
+    flex:1;background:transparent;border:0;outline:0;color:var(--text);
+    font-family:var(--mono);font-size:12.5px;caret-color:var(--green);padding:2px 0;
+  }
+  footer input::placeholder{color:#2f4a38}
+  .hint{color:#2f4a38;font-size:10px;white-space:nowrap}
+
+  ::-webkit-scrollbar{width:7px;height:7px}
+  ::-webkit-scrollbar-track{background:#050805}
+  ::-webkit-scrollbar-thumb{background:#16301d}
+  ::-webkit-scrollbar-thumb:hover{background:#1e4429}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <b>ZIM-CIVILIZATION</b>
+      <span>HERD HARNESS v0.1</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><u>TOKENS</u><b id="s-tok">0</b></div>
+      <div class="stat"><u>AGENTS</u><b id="s-ag">0</b></div>
+      <div class="stat"><u>MODEL SWITCH</u><b id="s-sw">0</b></div>
+      <div class="stat"><u>LIMIT HITS</u><b id="s-lim">0</b></div>
+      <div class="stat"><u>ACCT ROTATE</u><b id="s-acc">0</b></div>
+      <div class="stat"><u>UPTIME</u><b id="s-up">00:00</b></div>
+    </div>
+    <div class="live"><span class="dot"></span>LIVE</div>
+  </header>
+
+  <main>
+    <section class="agents" id="agents"></section>
+
+    <aside>
+      <div class="pnl">
+        <h2>FREE MODEL POOL <em id="pool-note">rotation order</em></h2>
+        <div class="pool" id="pool"></div>
+      </div>
+      <div class="pnl">
+        <h2>EVENT STREAM <em id="log-note">tail -f</em></h2>
+        <div class="log" id="log"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <span class="ps1">zim@civilization</span>
+    <span class="tgt" id="tgt">[ALL]</span>
+    <span class="sig">$</span>
+    <input id="inp" autocomplete="off" spellcheck="false" placeholder="prompt the herd…  (click a card to target one agent)">
+    <span class="hint">enter = send · esc = clear</span>
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================
+   ZIM-CIVILIZATION — herd harness visualizer (simulation)
+   5 agent CLIs · free-model rotation · account failover
+   ============================================================ */
+
+const POOL = [
+  {id:'deepseek-v4.1-flash', vendor:'deepseek', cap:120000},
+  {id:'qwen3-coder-480b',    vendor:'alibaba',  cap:100000},
+  {id:'kimi-k2-turbo',       vendor:'moonshot', cap:140000},
+  {id:'glm-4.6-air',         vendor:'zhipu',    cap:90000},
+  {id:'minimax-m2-free',     vendor:'minimax',  cap:110000},
+];
+const ACCOUNTS = ['acct-01','acct-02','acct-03','acct-04','acct-05'];
+const BARW = 24;
+
+const AGENTS = [
+  {id:'claude',   name:'CLAUDE CODE', cli:'claude',   rate:3400, start:0},
+  {id:'codex',    name:'CODEX',       cli:'codex',    rate:4300, start:1},
+  {id:'cline',    name:'CLINE',       cli:'cline',    rate:2700, start:2},
+  {id:'opencode', name:'OPENCODE',    cli:'opencode', rate:3700, start:3},
+  {id:'freebuff', name:'FREEBUFF',    cli:'freebuff', rate:2900, start:4},
+];
+
+const TOTAL = {tokens:0, switches:0, limits:0, acctRot:0, t0:Date.now()};
+let selected = 'ALL';
+let seq = 0;
+
+const state = AGENTS.map(a => ({
+  ...a,
+  modelIdx: a.start,
+  acctIdx: (a.start % 2),
+  tok: 0, life: 0, quota: 0,
+  status: 'idle', task: '—', switches:0, limits:0, el:null
+}));
+
+/* ---------- dom ---------- */
+const $agents = document.getElementById('agents');
+const $pool   = document.getElementById('pool');
+const $log    = document.getElementById('log');
+const $inp    = document.getElementById('inp');
+const $tgt    = document.getElementById('tgt');
+
+const fmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M'
+              : n >= 1e3 ? (n/1e3).toFixed(1)+'k'
+              : String(Math.round(n));
+const pad = n => String(n).padStart(2,'0');
+const stamp = () => {
+  const d = new Date();
+  return pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+};
+
+/* ---------- build cards ---------- */
+function buildCards(){
+  $agents.innerHTML = '';
+  for (const a of state){
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML = `
+      <div class="tag">429 LIMIT</div>
+      <div class="hd">
+        <span class="nm">${a.name}</span>
+        <span class="cli">${a.cli}</span>
+        <span class="st idle" data-f="st">● IDLE</span>
+      </div>
+      <div class="row"><span class="k">ACCOUNT</span><span class="v acct" data-f="acct"></span></div>
+      <div class="row"><span class="k">MODEL</span><span class="v model" data-f="model"></span></div>
+      <div class="bar"><span data-f="bar"></span></div>
+      <div class="meta">
+        <span>QUOTA <b data-f="qp">0%</b></span>
+        <span>MODEL TOK <b data-f="tok">0</b></span>
+        <span>SESSION <b data-f="life">0</b></span>
+      </div>
+      <div class="task" data-f="task"></div>`;
+    el.onclick = () => {
+      selected = (selected === a.id) ? 'ALL' : a.id;
+      $tgt.textContent = '['+(selected === 'ALL' ? 'ALL' : selected.toUpperCase())+']';
+      for (const o of state) o.el.classList.toggle('sel', selected === o.id);
+      log('d','target set → '+(selected === 'ALL' ? 'BROADCAST' : selected.toUpperCase()));
+    };
+    a.el = el;
+    $agents.appendChild(el);
+  }
+  syncStatic();
+}
+
+function f(a,name){ return a.el.querySelector('[data-f="'+name+'"]'); }
+
+function syncStatic(){
+  for (const a of state){
+    f(a,'acct').textContent  = ACCOUNTS[a.acctIdx]+'  ['+pad(a.switches)+' sw]';
+    f(a,'model').textContent = POOL[a.modelIdx].id;
+  }
+}
+
+/* ---------- pool panel ---------- */
+function buildPool(){
+  $pool.innerHTML = POOL.map((m,i) => `
+    <div class="prow">
+      <span class="pid">${m.id}</span>
+      <span class="pcap">${(m.cap/1000)|0}k</span>
+      <span class="pips" data-pool="${i}">
+        ${state.map(()=>'<span class="pip"></span>').join('')}
+      </span>
+    </div>`).join('');
+}
+
+/* ---------- log ---------- */
+function log(kind, msg){
+  const d = document.createElement('div');
+  d.innerHTML = `<span class="t">${stamp()}</span> <span class="${kind}">${msg}</span>`;
+  $log.prepend(d);
+  while ($log.children.length > 220) $log.lastChild.remove();
+}
+
+/* ---------- simulation ---------- */
+function hitLimit(a){
+  a.status = 'limit';
+  a.quota = 1;
+  a.limits++;
+  TOTAL.limits++;
+  a.el.classList.add('limit');
+  log('l', `429 · ${a.name} exhausted ${POOL[a.modelIdx].id} @ ${fmt(a.tok)} tok`);
+}
+
+function rotate(a){
+  a.el.classList.remove('limit');
+  a.el.classList.add('switching');
+  a.status = 'switching';
+  const prev = POOL[a.modelIdx].id;
+
+  a.modelIdx++;
+  let acctSwitch = false;
+  if (a.modelIdx >= POOL.length){
+    a.modelIdx = 0;
+    a.acctIdx = (a.acctIdx + 1) % ACCOUNTS.length;
+    TOTAL.acctRot++;
+    acctSwitch = true;
+  }
+  a.tok = 0; a.quota = 0; a.switches++; TOTAL.switches++;
+
+  const next = POOL[a.modelIdx].id;
+  if (acctSwitch){
+    log('a', `account failover · ${a.name} ${prev} → exhausted pool → ${ACCOUNTS[a.acctIdx]}`);
+    log('s', `↻ ${a.name} resumed on ${next} under ${ACCOUNTS[a.acctIdx]}`);
+  } else {
+    log('s', `↻ ${a.name} ${prev} → ${next}  (free tier, no downtime)`);
+  }
+
+  setTimeout(()=>{
+    a.el.classList.remove('switching');
+    if (a.status === 'switching') a.status = 'run';
+  }, 900);
+}
+
+function tick(dt){
+  for (const a of state){
+    if (a.status !== 'run') continue;
+    const inc = a.rate * dt * (0.82 + Math.random()*0.36);
+    a.tok += inc; a.life += inc; TOTAL.tokens += inc;
+    a.quota = a.tok / POOL[a.modelIdx].cap;
+    if (a.quota >= 1){
+      a.quota = 1;
+      hitLimit(a);
+      setTimeout(()=>rotate(a), 1000);
+    }
+  }
+}
+
+/* ---------- render ---------- */
+function render(){
+  const STL = {idle:['idle','● IDLE'], run:['run','● RUNNING'],
+               limit:['limit','⚡ LIMIT'], switching:['switching','◌ SWITCHING']};
+
+  for (const a of state){
+    const s = STL[a.status];
+    const stEl = f(a,'st');
+    stEl.className = 'st '+s[0];
+    stEl.textContent = s[1];
+
+    const filled = Math.round(Math.min(a.quota,1) * BARW);
+    const cls = a.quota >= 0.98 ? 'crit' : a.quota >= 0.8 ? 'warn' : '';
+    f(a,'bar').innerHTML =
+      `<span class="fill ${cls}">${'█'.repeat(filled)}</span><span class="empty">${'░'.repeat(BARW-filled)}</span>`;
+
+    f(a,'qp').textContent   = Math.round(a.quota*100)+'%';
+    f(a,'tok').textContent  = fmt(a.tok);
+    f(a,'life').textContent = fmt(a.life);
+    f(a,'task').innerHTML   = `<i>›</i> ${a.task}`;
+
+    // pool pips
+    const pip = $pool.querySelector(`[data-pool="${POOL.indexOf(POOL[a.modelIdx])}"]`)
+             ?.children[state.indexOf(a)];
+    if (pip){
+      pip.className = 'pip on' + (a.status === 'limit' ? ' limit'
+                              : a.status === 'switching' ? ' switching' : '');
+    }
+  }
+  // clear pips for unused models
+  for (let i=0;i<POOL.length;i++){
+    const holder = $pool.querySelector(`[data-pool="${i}"]`);
+    if (!holder) continue;
+    [...holder.children].forEach((pip, ai) => {
+      if (state[ai].modelIdx !== i) pip.className = 'pip';
+    });
+  }
+  syncStatic();
+
+  document.getElementById('s-tok').textContent = fmt(TOTAL.tokens);
+  document.getElementById('s-ag').textContent  = state.filter(a=>a.status==='run').length + '/' + state.length;
+  document.getElementById('s-sw').textContent  = TOTAL.switches;
+  document.getElementById('s-lim').textContent = TOTAL.limits;
+  document.getElementById('s-acc').textContent = TOTAL.acctRot;
+  const up = (Date.now()-TOTAL.t0)/1000;
+  document.getElementById('s-up').textContent = pad((up/60)|0)+':'+pad((up%60)|0);
+}
+
+/* ---------- prompt ---------- */
+function send(task){
+  if (!task.trim()) return;
+  const targets = selected === 'ALL' ? state.filter(a=>a.status!=='limit') : state.filter(a=>a.id===selected);
+  for (const a of targets){
+    a.task = task.length > 58 ? task.slice(0,57)+'…' : task;
+    if (a.status !== 'limit') a.status = 'run';
+  }
+  log('o', `prompt → ${targets.map(t=>t.name).join(', ')}`);
+  log('i', `  "${task}"`);
+}
+
+$inp.addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ send($inp.value); $inp.value=''; }
+  if (e.key === 'Escape'){ $inp.value=''; }
+});
+
+/* ---------- boot ---------- */
+buildCards();
+buildPool();
+log('o','zim-civilization herd harness online');
+log('d','5 agents · 5 free models × 5 accounts · auto-failover armed');
+log('i','rotation rule: model limit → next free model → after pool drained → next account');
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min((now-last)/1000, .25);
+  last = now;
+  tick(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+setTimeout(()=>{
+  send('refactor the auth module and write tests');
+  log('d','broadcast mission dispatched to all agents');
+}, 700);
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

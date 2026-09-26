@@ -1,0 +1,29 @@
+{
+  "opencode_bin": "/root/.opencode/bin/opencode",
+  "profiles_dir": "/home/zim/.opencode-profiles",
+  "profiles": ["bounty"],
+  "cwd": "/home/zim/zim-civilization/workspace",
+  "agents": 3,
+
+  "model_pool": [
+    { "id": "opencode/mimo-v2.6-flash-free",            "soft_cap": 150000 },
+    { "id": "opencode/nemotron-3.5-lightning-free",     "soft_cap": 150000 },
+    { "id": "opencode/ling-3.0-flash-fin-free",         "soft_cap": 150000 },
+    { "id": "opencode/muse-spark-1.3-contributor-free", "soft_cap": 150000 },
+    { "id": "opencode/nemotron-3-ultra-free",           "soft_cap": 150000 },
+    { "id": "opencode/space-bunny-free",                "soft_cap": 150000 },
+    { "id": "opencode/big-pickle",                      "soft_cap": 150000 }
+  ],
+
+  "limits": {
+    "run_timeout": 300,
+    "max_consecutive_errors": 3,
+    "cooldown": 3.0
+  },
+
+  "limit_patterns": [
+    "429", "rate limit", "ratelimit", "rate_limit", "too many requests",
+    "quota", "exceeded", "insufficient", "credit", "capacity", "overloaded",
+    "limit reached", "out of"
+  ]
+}
