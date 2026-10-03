@@ -35,16 +35,56 @@ python3 herd.py send "status report"            # poke a running herd
 | `c` | new window |
 | `n` / `p` | next / previous window |
 | `0-9` | select window by number |
+| `m` | **pick which agent to send to** (and follow its output) |
+| `a` | clear the target — send to ALL again |
 | `h` | split horizontal (top/bottom) |
 | `v` | split vertical (side by side) |
 | `o` / arrows | cycle / move pane focus |
-| `t` | change pane content (dashboard → agent → log → pool) |
+| `t` | change pane content (dashboard → output → log → pool) |
 | `x` | kill pane |
 | `z` | zoom pane |
 | `r` | force model rotation on the focused agent |
 | `?` | help |
 | `d` | detach / quit |
-| `Enter` | focus the prompt line — `Tab` toggles broadcast vs. focused agent |
+| `Enter` | focus the prompt line — `Tab` leaves ALL / returns to ALL |
+
+## Sending to one model, and reading its answer
+
+**Yes — a broadcast's replies are readable.** Window `0` is a comparison view:
+one column per agent, side by side, each showing its model, its state, and its
+latest reply. Send to all and you see all the answers at once.
+
+```
+┌─ all replies ────────────────────────────────────────────────┐
+│  agent-1 · mimo-v2.6     │  agent-2 · nemotron-3.5  │  agent-3 · ling-3.0
+│  idle · 7750 tok · 0sw   │  idle · 8264 tok · 0sw   │  idle · 8104 tok · 0sw
+│ ──────────────────────── │ ──────────────────────── │ ────────────────
+│  PONG-opencode/mimo-v2.6 │  PONG-nemotron-3.5-light │  PONG-ling-3.0-fla
+└──────────────────────────────────────────────────────────────┘
+```
+
+Columns clip to fit the pane; `prefix z` zooms a pane full-screen when you want
+one answer in full. Long replies keep their newest lines at the bottom.
+
+To talk to a single agent instead of all of them:
+
+- **`prefix n`** walks the windows: window `0` is the fan-out view (all
+  replies side by side; prompt broadcasts), and windows `1..N` are bound to one
+  agent each — their panes show that agent's own transcript. The prompt line
+  reads `[ALL]` or `[agent-2]` so you always know where a prompt is going, and
+  the tab bar labels each window (`0:ALL  1:a1  2:a2`).
+- **`prefix m`** opens a picker listing every agent with its current state and
+  model. `↑`/`↓` (or `j`/`k`, or the number key) choose, `Enter` binds the
+  current window to it. The picker doubles as a status board — you can see
+  which model each agent is on before you spend a prompt on it.
+- **`prefix a`** (or `Tab` in the prompt line) returns to ALL.
+
+An agent's window is a **transcript**, not just a status feed: it shows the
+prompt it was given, every line of the model's reply, and its rotation history
+(`429` → new model → new account). Replies are no longer truncated to a
+one-line teaser. The full text of every turn is also appended to
+`herd.results.jsonl` (up to 20k chars per reply) if you want to read it back
+later or diff two models' answers.
 
 ## The rotation ladder
 

@@ -288,13 +288,17 @@ class Worker(threading.Thread):
         self.stop_flag = False
         self.lines: list[tuple[str, str, str]] = []   # per-agent stream for the muxer
 
-    def nlog(self, kind: str, msg: str):
-        """Log to the engine's event stream and this agent's own stream."""
+    def alog(self, kind: str, msg: str):
+        """Log to this agent's own stream only — its pane's transcript."""
         ts = time.strftime("%H:%M:%S")
         with self.engine.lock:
             self.lines.append((kind, ts, msg))
             if len(self.lines) > 400:
                 del self.lines[:100]
+
+    def nlog(self, kind: str, msg: str):
+        """Log to the engine's event stream and this agent's own stream."""
+        self.alog(kind, msg)
         self.engine.log(kind, msg)
 
     # -- queue
@@ -345,6 +349,9 @@ class Worker(threading.Thread):
             model = self.model
             self.status = "running"
             self.task = message if len(message) <= 90 else message[:89] + "…"
+            # Show what was asked in the agent's own stream, so its pane reads
+            # as a prompt/reply transcript rather than a wall of status lines.
+            self.alog("prompt", f"› {message}")
             self.nlog("run", f"-> {model}  [{self.profile}]")
 
             out = run_once(self.engine.cfg, self.profile, self.name, model,
@@ -381,17 +388,17 @@ class Worker(threading.Thread):
             # success
             self.errors = 0
             self.status = "idle"
-            self.last = (out.text or "").strip().replace("\n", " ")[:300]
-            self.nlog("ok", f"done {fmt(out.tokens)} tok on {model}")
-            # Surface the actual answer in the agent's stream — otherwise the
-            # pane shows only status lines and the reply is invisible.
             reply = (out.text or "").strip()
+            self.last = reply.replace("\n", " ")[:300]
+            self.nlog("ok", f"done {fmt(out.tokens)} tok on {model}")
+            # The full answer goes into the agent's own stream, one entry per
+            # line. The shared event log gets only a one-line pointer, or it
+            # would drown in model output once replies are no longer truncated.
             if reply:
-                first = reply.splitlines()[0][:160]
-                self.nlog("reply", f"↳ {first}")
-                if len(reply.splitlines()) > 1:
-                    self.nlog("reply", f"  (+{len(reply.splitlines())-1} more lines)")
-            self.engine.record(self.name, model, message, out.text, out.tokens)
+                for ln in reply.splitlines():
+                    self.alog("reply", ln)
+                self.engine.log("reply", f"{self.name} ↳ {reply.splitlines()[0][:120]}")
+            self.engine.record(self.name, model, message, reply, out.tokens)
             # a successful turn may itself have triggered a limit mid-stream elsewhere;
             # honour the soft cap as an early hint only when no error surfaced
             if self.quota() >= 1.0:
@@ -459,7 +466,7 @@ class Engine:
         with self.lock:
             self.results.append({
                 "ts": time.time(), "agent": agent, "model": model,
-                "prompt": prompt[:400], "reply": (reply or "")[:1500], "tokens": tokens,
+                "prompt": prompt[:400], "reply": (reply or "")[:20000], "tokens": tokens,
             })
             try:
                 with open(ROOT / "herd.results.jsonl", "a") as f:

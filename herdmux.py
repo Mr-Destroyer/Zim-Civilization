@@ -11,11 +11,17 @@ herd needs. Ctrl-B is the prefix.
     prefix v    split pane vertical   (side by side)
     prefix o    cycle pane focus     arrows      move focus
     prefix t    change the focused pane's content
+    prefix m    pick which agent to send to (and follow its output)
+    prefix a    send to ALL again (clear the target)
     prefix x    kill pane            prefix z    zoom pane
     prefix r    force model rotation on the focused agent
     prefix ?    help                 prefix d    detach / quit
     prefix 0-9  select window by number
-    Enter       focus the prompt line   Esc cancel   Tab broadcast toggle
+    Enter       focus the prompt line   Esc cancel   Tab leave / return to ALL
+
+Window 0 is the fan-out view (dashboard; prompts broadcast to every agent).
+Windows 1..N are bound to one agent each and show that agent's transcript —
+the prompt it was given, its full reply, and its rotation history.
 
 Panes render the harness's own telemetry (agent streams, log, pool, dashboard)
 rather than hosting foreign full-screen programs, so no VT emulation is needed.
@@ -92,7 +98,10 @@ class Pane:
         self.scroll = 0
 
     def title(self) -> str:
-        return {"dashboard": "herd", "log": "events", "pool": "model pool"}.get(
+        if self.content == "agent":
+            return f"output · {getattr(self.agent, 'name', '?')}"
+        return {"all": "all replies", "dashboard": "herd",
+                "log": "events", "pool": "model pool"}.get(
             self.content, self.content)
 
 
@@ -103,11 +112,14 @@ class Split:
 
 
 class Window:
-    def __init__(self, idx: int, root, focus: Pane):
+    def __init__(self, idx: int, root, focus: Pane, agent=None):
         self.idx = idx
         self.root = root
         self.focus = focus
         self.zoom = False
+        # Which worker this window is bound to. Bound once and followed, so a
+        # rotation doesn't silently leave you looking at another model's stream.
+        self.agent = agent
 
 
 def leaves(node):
@@ -219,7 +231,7 @@ class Screen:
 
 # --------------------------------------------------------------------------- tui
 
-CONTENTS = ["dashboard", "agent-stream", "log", "pool"]
+CONTENTS = ["all", "dashboard", "agent", "log", "pool"]
 
 
 class TUI:
@@ -232,30 +244,59 @@ class TUI:
         self.wcur = 0
         self.input_mode = False
         self.buf = ""
-        self.broadcast = True
         self.prefix = False
         self.flash = ""
         self.flash_t = 0.0
         self.help = False
+        self.picker = False
+        self.sel = 0
         self.view = 0
-        self._new_window(first=True)
+        # window 0 is the fan-out view; one bound window per agent after it,
+        # so `prefix n` walks: broadcast → agent-1 output → agent-2 output → …
+        self._new_window(first=True, content="all")
+        for w in self.eng.workers:
+            self._new_window(agent=w)
+        self.wcur = 0          # start on the ALL/broadcast window
 
     # -- windows
-    def _agent_pane(self, i):
-        p = Pane("dashboard")
-        p.agent = self.eng.workers[i % len(self.eng.workers)]
-        p.content = "agent"
+    def _agent_pane(self, agent):
+        p = Pane("agent")
+        p.agent = agent
         return p
 
-    def _new_window(self, first=False):
-        p = Pane("dashboard")
-        self.windows.append(Window(len(self.windows), p, p))
+    def _new_window(self, first=False, agent=None, content=None):
+        if agent is not None:
+            p = self._agent_pane(agent)
+        else:
+            p = Pane(content or "dashboard")
+        self.windows.append(Window(len(self.windows), p, p, agent))
         if not first:
             self.wcur = len(self.windows) - 1
 
     @property
     def win(self) -> Window:
         return self.windows[self.wcur]
+
+    def _rebind(self, win: Window, agent):
+        """Point a window (and every agent pane inside it) at `agent`."""
+        win.agent = agent
+        for p in leaves(win.root):
+            if p.content == "agent":
+                p.agent = agent
+                p.scroll = 0
+
+    def target(self):
+        """The worker the prompt line currently speaks to, or None for ALL.
+
+        Resolution order: the focused pane's own agent, then the window's
+        binding. A window with neither is the fan-out view, which broadcasts.
+        """
+        a = getattr(self.win.focus, "agent", None)
+        return a if a is not None else self.win.agent
+
+    def agent_of(self, pane) -> str | None:
+        a = self.target()
+        return a.name if a is not None else None
 
     def notice(self, msg):
         self.flash = msg
@@ -290,7 +331,12 @@ class TUI:
             return
         if b == b"\x1b" and not self.prefix:
             self.input_mode = False
+            self.picker = False
             self.buf = ""
+            return
+
+        if self.picker:
+            self.picker_key(b)
             return
 
         if self.help:
@@ -344,6 +390,10 @@ class TUI:
             self.cycle_focus()
         elif ch == "t":
             self.cycle_content()
+        elif ch == "m":
+            self.open_picker()
+        elif ch == "a":
+            self.unbind_target()
         elif ch == "x":
             self.kill_pane()
         elif ch == "z":
@@ -362,6 +412,52 @@ class TUI:
         else:
             self.notice(f"unbound: {ch}")
 
+    # -- target picker
+    def open_picker(self):
+        self.picker = True
+        self.input_mode = False
+        cur = self.win.agent
+        self.sel = self.eng.workers.index(cur) if cur in self.eng.workers else 0
+
+    def picker_key(self, b: bytes):
+        n = len(self.eng.workers)
+        if b == b"\x1b[A" or b == b"k":
+            self.sel = (self.sel - 1) % n
+        elif b == b"\x1b[B" or b == b"j":
+            self.sel = (self.sel + 1) % n
+        elif b in (b"\x0d", b"\x0a"):
+            self.picker = False
+            self.bind_target(self.sel)
+        elif b in (b"\x7f", b"\x08", b"q"):
+            self.picker = False
+        elif b.decode("utf-8", "ignore").isdigit():
+            i = int(b.decode())
+            if i < n:
+                self.picker = False
+                self.bind_target(i)
+
+    def bind_target(self, i: int):
+        """Bind the current window to worker `i`: prompt goes only to it, and
+        its panes show that worker's transcript. ctrl-b a returns to ALL."""
+        w = self.eng.workers[i]
+        self._rebind(self.win, w)
+        self.notice(f"target -> {w.name} ({w.model})")
+
+    def unbind_target(self):
+        """Detach the window from any single agent and return it to fan-out.
+
+        The panes have to be reset too, not just the window binding: a pane
+        showing one agent's stream is itself a target, so leaving it in place
+        would keep routing the prompt to that agent.
+        """
+        self.win.agent = None
+        for p in leaves(self.win.root):
+            if p.content == "agent":
+                p.content = "dashboard"
+                if getattr(p, "agent", None) is not None:
+                    del p.agent
+        self.notice("target -> ALL (broadcast)")
+
     def do_input(self, b: bytes):
         if b in (b"\x0d", b"\x0a"):
             text = self.buf.strip()
@@ -374,7 +470,11 @@ class TUI:
             self.buf = self.buf[:-1]
             return
         if b == b"\t":
-            self.broadcast = not self.broadcast
+            # Tab: leave ALL for the first agent, or clear a target back to ALL.
+            if self.target() is None and self.eng.workers:
+                self.bind_target(0)
+            else:
+                self.unbind_target()
             return
         try:
             s = b.decode("utf-8")
@@ -388,6 +488,8 @@ class TUI:
         new = Pane(p.content if not p.content == "dashboard" else "dashboard")
         if getattr(p, "agent", None) is not None:
             new.agent = p.agent
+        elif p.content == "agent" and self.win.agent is not None:
+            new.agent = self.win.agent
         parent = Split(orient, p, new)
         self.win.root = replace_focus(self.win.root, p, lambda _: parent)
         self.win.focus = new
@@ -402,24 +504,21 @@ class TUI:
 
     def cycle_content(self):
         p = self.win.focus
-        if getattr(p, "agent", None) is not None:
-            p.content = "dashboard"
-            del p.agent
-            return
-        if p.content == "dashboard":
-            # next: attach to first agent not already shown in this window
-            shown = {id(getattr(q, "agent", None)) for q in leaves(self.win.root)}
-            for w in self.eng.workers:
-                if id(w) not in shown:
-                    p.content, p.agent = "agent", w
-                    return
-            p.content = "log"
-        elif p.content == "agent":
-            p.content = "log"
-        elif p.content == "log":
-            p.content = "pool"
+        nxt = CONTENTS[(CONTENTS.index(p.content) + 1) % len(CONTENTS)]
+        if nxt == "agent":
+            # Bind to the window's agent, else the first worker not already
+            # shown in this window, so cycling never duplicates a stream.
+            target = self.win.agent
+            if target is None:
+                shown = {id(getattr(q, "agent", None)) for q in leaves(self.win.root)}
+                target = next((w for w in self.eng.workers if id(w) not in shown),
+                              self.eng.workers[0])
+            p.agent = target
         else:
-            p.content = "dashboard"
+            if getattr(p, "agent", None) is not None:
+                del p.agent
+        p.content = nxt
+        p.scroll = 0
 
     def kill_pane(self):
         ls = list(leaves(self.win.root))
@@ -440,13 +539,10 @@ class TUI:
         self.notice(f"{a.name} rotated")
 
     def send(self, text: str):
-        if self.broadcast:
+        a = self.target()
+        if a is None:
             self.eng.broadcast(text)
             self.notice(f"broadcast: {text[:40]}")
-            return
-        a = getattr(self.win.focus, "agent", None)
-        if not a:
-            self.notice("no agent in focus — Tab for broadcast")
             return
         a.enqueue(text)
         self.eng.log("prompt", f"-> {a.name}: {text[:100]}")
@@ -488,8 +584,10 @@ class TUI:
     # -- content
     def pane_lines(self, p: Pane, w: int, h: int) -> list[tuple[str, str | None]]:
         if p.content == "log":
+            # Oldest-first: the pane viewport shows the tail of the list, so
+            # reversing here would pin the pane to stale entries.
             return [(f" {ts} {msg[:max(0, w-11)]}", KIND_COLOR.get(k, "none"))
-                    for k, ts, msg in reversed(self.eng.log_lines[-400:])]
+                    for k, ts, msg in self.eng.log_lines[-400:]]
         if p.content == "pool":
             out = []
             for m in self.eng.cfg["pool"]:
@@ -557,8 +655,19 @@ class TUI:
             p.scroll = min(p.scroll, maxscroll)
             start = max(0, len(lines) - inner_h - p.scroll)
             view = lines[start:start + inner_h]
-            for i, (text, col) in enumerate(view):
-                s.put(x + 1, y + 1 + i, " " + clip(text, inner_w - 1), col, maxw=inner_w)
+            for i, row in enumerate(view):
+                # A row is either a plain (text, colour) line or a list of
+                # (text, colour) segments to be laid out left to right.
+                segs = row if isinstance(row, list) else [row]
+                cx = x + 1
+                s.put(cx, y + 1 + i, " ", None, maxw=inner_w)
+                cx += 1
+                for text, col in segs:
+                    text = clip(text, max(0, x + pw - 1 - cx))
+                    if not text:
+                        continue
+                    s.put(cx, y + 1 + i, text, col, maxw=x + pw - 1 - cx)
+                    cx += len(text)
 
         # window tabs
         ty = h - 3
@@ -566,24 +675,29 @@ class TUI:
         x = 0
         for wi, win in enumerate(self.windows):
             n = len(list(leaves(win.root)))
-            label = f" {wi}:{n}p "
+            # Show the binding, so you can see at a glance which window talks
+            # to which agent (and which one fans out to all).
+            name = win.agent.name.replace("agent-", "a") if win.agent else "ALL"
+            label = f" {wi}:{name} "
+            if n > 1:
+                label = f" {wi}:{name}·{n}p "
             col = "green" if wi == self.wcur else "grey"
             s.put(x, ty, label, col)
             x += len(label)
-        s.put(x + 1, ty, "· prefix c new · n next · h/v split · t content · ? help",
+        s.put(x + 1, ty, "· prefix c new · n/p agent · m pick target · h/v split · ? help",
               "grey", maxw=max(0, w - x - 2))
 
         # prompt line
         iy = h - 2
         s.fill(0, iy, w, 1, " ", None)
-        tgt = "ALL" if self.broadcast else (
-            getattr(self.win.focus, "agent", None).name
-            if getattr(self.win.focus, "agent", None) else "—")
+        tgt = self.agent_of(self.win.focus) or "ALL"
         s.put(0, iy, "›", "green")
         s.put(2, iy, f"[{tgt}]", "yellow")
-        s.put(9, iy, self.buf, "white", maxw=max(0, w - 12))
+        px = 4 + len(tgt)
+        s.put(px, iy, " ", "white")
+        s.put(px + 1, iy, self.buf, "white", maxw=max(0, w - px - 2))
         if self.input_mode:
-            s.put(9 + min(len(self.buf), w - 12), iy, "█", "green")
+            s.put(px + 1 + min(len(self.buf), max(0, w - px - 2)), iy, "█", "green")
 
         # status
         sy = h - 1
@@ -594,22 +708,44 @@ class TUI:
             s.put(0, sy, " ctrl-b ", "grey")
         msg = self.flash if (time.time() - self.flash_t) < 4 else ""
         s.put(9, sy, msg, "cyan", maxw=max(0, w - 20))
-        hint = "enter prompt · tab bcast · esc close"
+        hint = "enter prompt · ctrl-b m target · esc close"
         s.put(max(0, w - len(hint) - 1), sy, hint, "grey")
+
+        # target picker — pick which agent the prompt goes to, then read its
+        # output in that same window
+        if self.picker:
+            n = len(self.eng.workers)
+            ow, oh = min(64, w - 4), n + 4
+            ox, oy = (w - ow) // 2, max(1, (h - oh) // 2)
+            s.box(ox, oy, ow, oh, "send to which agent?  (enter picks, esc cancels)",
+                  focused=True)
+            for i, a in enumerate(self.eng.workers):
+                row = oy + 1 + i
+                mark = "▶" if i == self.sel else " "
+                txt = (f" {mark} {a.name:<8} {a.status:<9} "
+                       f"{clip(a.model, ow - 28)}")
+                s.put(ox + 2, row, txt,
+                      "green" if i == self.sel else "white", maxw=ow - 4)
+            s.put(ox + 2, oy + oh - 2,
+                  "tab/enter sends here · ctrl-b a = back to ALL",
+                  "grey", maxw=ow - 4)
 
         # help overlay
         if self.help:
-            ow, oh = min(62, w - 4), 18
+            ow, oh = min(62, w - 4), 20
             ox, oy = (w - ow) // 2, max(1, (h - oh) // 2)
             s.box(ox, oy, ow, oh, "herdmux — prefix is ctrl-b", focused=True)
             rows = [
                 "c          new window", "n / p      next / previous window",
-                "0-9        select window", "h          split horizontal (top/bottom)",
+                "0-9        select window", "m          pick agent to send to",
+                "a          send to ALL (clear target)",
+                "h          split horizontal (top/bottom)",
                 "v          split vertical (side by side)", "o          cycle pane focus",
                 "arrows     move focus", "t          change pane content",
+                "pgup/pgdn  scroll the focused pane (0 = follow latest)",
                 "x          kill pane", "z          zoom pane",
                 "r          force model rotation", "enter      prompt the herd",
-                "tab        toggle broadcast", "d          detach / quit",
+                "tab        leave ALL / back to ALL", "d          detach / quit",
                 "esc        close this help",
             ]
             for i, r in enumerate(rows):
@@ -617,8 +753,50 @@ class TUI:
 
         self.render(s)
 
+    def all_columns(self, w: int):
+        """One column per agent, side by side, each with its latest reply.
+
+        A broadcast fans one prompt out to every agent; without this the only
+        way to read the answers is to walk the per-agent windows one at a time,
+        which defeats the point of comparing models. Columns are sized to the
+        pane, so the replies read next to each other.
+
+        Returns rows, each row a list of (text, colour) segments — the pane
+        renderer accepts either that or a plain (text, colour) line.
+        """
+        ws = self.eng.workers
+        if not ws:
+            return [[(" (no agents)", "grey")]]
+        gap = " │ "
+        colw = max(16, (w - len(gap) * (len(ws) - 1)) // len(ws))
+
+        cols = []
+        for a in ws:
+            rl = [msg for k, _ts, msg in (a.lines or []) if k == "reply"]
+            c = [(f" {a.name} · {a.model}", "green"),
+                 (f" {a.status} · {a.tok_session} tok · {a.switches}sw", "grey"),
+                 ("─" * colw, "grey")]
+            # Keep the newest lines: the column's bottom is the live end.
+            c += [(f" {m}", "white") for m in rl[-60:]]
+            if not rl:
+                c.append((" (no reply yet)", "grey"))
+            cols.append([(clip(t, colw).ljust(colw), col) for t, col in c])
+
+        rows = max(len(c) for c in cols)
+        out = []
+        for r in range(rows):
+            row = []
+            for ci, c in enumerate(cols):
+                if ci:
+                    row.append((gap, "grey"))
+                row.append(c[r] if r < len(c) else (" " * colw, None))
+            out.append(row)
+        return out
+
     def content_for(self, p: Pane, w: int):
         """Full, unwrapped logical lines for a pane (scroll applied by caller)."""
+        if p.content == "all":
+            return self.all_columns(w)
         if p.content == "agent" and getattr(p, "agent", None):
             a = p.agent
             q = a.quota()
@@ -638,7 +816,9 @@ class TUI:
                 ("", None),
                 ("── stream " + "─" * max(0, w - 10), "grey"),
             ]
-            for k, ts, msg in reversed((a.lines or [])[-200:]):
+            # Oldest-first, newest at the bottom — the viewport takes the tail,
+            # so a long reply shows its most recent lines rather than its first.
+            for k, ts, msg in (a.lines or [])[-200:]:
                 out.append((f"{ts} {msg}", KIND_COLOR.get(k, "none")))
             if not a.lines:
                 out.append((" (no activity yet — send a prompt)", "grey"))
